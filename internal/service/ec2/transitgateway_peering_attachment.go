@@ -77,6 +77,10 @@ func resourceTransitGatewayPeeringAttachment() *schema.Resource {
 					Optional: true,
 					ForceNew: true,
 					MaxItems: 1,
+					// An "options" block with no arguments set is equivalent to no block at all.
+					DiffSuppressFunc: func(k, old, new string, d *schema.ResourceData) bool {
+						return k == "options.#" && old == "0" && new == "1" && d.Get("options.0.dynamic_routing").(string) == ""
+					},
 					Elem: &schema.Resource{
 						Schema: map[string]*schema.Schema{
 							"dynamic_routing": {
@@ -208,11 +212,16 @@ func expandCreateTransitGatewayPeeringAttachmentRequestOptions(tfMap []any) *aws
 		apiObject.DynamicRouting = awstypes.DynamicRoutingValue(v)
 	}
 
+	if apiObject.DynamicRouting == "" {
+		return nil
+	}
+
 	return apiObject
 }
 
 func flattenTransitGatewayPeeringAttachmentOptions(apiObject *awstypes.TransitGatewayPeeringAttachmentOptions) []any {
-	if apiObject == nil {
+	// AWS may return an empty Options object, which must not flatten into an "options" block.
+	if apiObject == nil || apiObject.DynamicRouting == "" {
 		return nil
 	}
 

@@ -106,6 +106,7 @@ func TestAccTransitGateway_serial(t *testing.T) {
 			"tags":               testAccTransitGatewayPeeringAttachment_tags,
 			"differentAccount":   testAccTransitGatewayPeeringAttachment_differentAccount,
 			"options":            testAccTransitGatewayPeeringAttachment_options,
+			"emptyOptions":       testAccTransitGatewayPeeringAttachment_emptyOptions,
 		},
 		"PeeringAttachmentAccepter": {
 			acctest.CtBasic:    testAccTransitGatewayPeeringAttachmentAccepter_basic,

@@ -9,6 +9,7 @@ import (
 	"testing"
 
 	awstypes "github.com/aws/aws-sdk-go-v2/service/ec2/types"
+	"github.com/google/go-cmp/cmp"
 	"github.com/hashicorp/terraform-plugin-testing/helper/resource"
 	"github.com/hashicorp/terraform-plugin-testing/plancheck"
 	"github.com/hashicorp/terraform-plugin-testing/terraform"
@@ -18,6 +19,80 @@ import (
 	tfec2 "github.com/hashicorp/terraform-provider-aws/internal/service/ec2"
 	"github.com/hashicorp/terraform-provider-aws/names"
 )
+
+func TestFlattenTransitGatewayPeeringAttachmentOptions(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		apiObject *awstypes.TransitGatewayPeeringAttachmentOptions
+		expected  []any
+	}{
+		"nil": {
+			apiObject: nil,
+			expected:  nil,
+		},
+		"empty": {
+			apiObject: &awstypes.TransitGatewayPeeringAttachmentOptions{},
+			expected:  nil,
+		},
+		"dynamic routing": {
+			apiObject: &awstypes.TransitGatewayPeeringAttachmentOptions{
+				DynamicRouting: awstypes.DynamicRoutingValueEnable,
+			},
+			expected: []any{map[string]any{
+				"dynamic_routing": awstypes.DynamicRoutingValueEnable,
+			}},
+		},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := tfec2.FlattenTransitGatewayPeeringAttachmentOptions(testCase.apiObject)
+
+			if diff := cmp.Diff(result, testCase.expected); diff != "" {
+				t.Errorf("unexpected diff (+wanted, -got): %s", diff)
+			}
+		})
+	}
+}
+
+func TestExpandCreateTransitGatewayPeeringAttachmentRequestOptions(t *testing.T) {
+	t.Parallel()
+
+	testCases := map[string]struct {
+		tfList   []any
+		expected *awstypes.CreateTransitGatewayPeeringAttachmentRequestOptions
+	}{
+		"nil": {
+			tfList:   nil,
+			expected: nil,
+		},
+		"empty block": {
+			tfList:   []any{map[string]any{"dynamic_routing": ""}},
+			expected: nil,
+		},
+		"dynamic routing": {
+			tfList: []any{map[string]any{"dynamic_routing": "enable"}},
+			expected: &awstypes.CreateTransitGatewayPeeringAttachmentRequestOptions{
+				DynamicRouting: awstypes.DynamicRoutingValueEnable,
+			},
+		},
+	}
+
+	for name, testCase := range testCases {
+		t.Run(name, func(t *testing.T) {
+			t.Parallel()
+
+			result := tfec2.ExpandCreateTransitGatewayPeeringAttachmentRequestOptions(testCase.tfList)
+
+			if diff := cmp.Diff(result, testCase.expected, cmp.AllowUnexported(awstypes.CreateTransitGatewayPeeringAttachmentRequestOptions{})); diff != "" {
+				t.Errorf("unexpected diff (+wanted, -got): %s", diff)
+			}
+		})
+	}
+}
 
 func testAccTransitGatewayPeeringAttachment_basic(t *testing.T, semaphore tfsync.Semaphore) {
 	ctx := acctest.Context(t)
@@ -57,6 +132,55 @@ func testAccTransitGatewayPeeringAttachment_basic(t *testing.T, semaphore tfsync
 				ResourceName:      resourceName,
 				ImportState:       true,
 				ImportStateVerify: true,
+			},
+		},
+	})
+}
+
+// https://github.com/hashicorp/terraform-provider-aws/issues/50130.
+func testAccTransitGatewayPeeringAttachment_emptyOptions(t *testing.T, semaphore tfsync.Semaphore) {
+	ctx := acctest.Context(t)
+	var transitGatewayPeeringAttachment awstypes.TransitGatewayPeeringAttachment
+	rName := acctest.RandomWithPrefix(t, acctest.ResourcePrefix)
+	resourceName := "aws_ec2_transit_gateway_peering_attachment.test"
+
+	acctest.ParallelTest(ctx, t, resource.TestCase{
+		PreCheck: func() {
+			testAccPreCheckTransitGatewaySynchronize(t, semaphore)
+			acctest.PreCheck(ctx, t)
+			testAccPreCheckTransitGateway(ctx, t)
+			acctest.PreCheckMultipleRegion(t, 2)
+		},
+		ErrorCheck:               acctest.ErrorCheck(t, names.EC2ServiceID),
+		ProtoV5ProviderFactories: acctest.ProtoV5FactoriesAlternate(ctx, t),
+		CheckDestroy:             testAccCheckTransitGatewayPeeringAttachmentDestroy(ctx, t),
+		Steps: []resource.TestStep{
+			{
+				Config: testAccTransitGatewayPeeringAttachmentConfig_sameAccount(rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckTransitGatewayPeeringAttachmentExists(ctx, t, resourceName, &transitGatewayPeeringAttachment),
+					resource.TestCheckResourceAttr(resourceName, "options.#", "0"),
+				),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PostApplyPostRefresh: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
+			},
+			{
+				Config: testAccTransitGatewayPeeringAttachmentConfig_emptyOptions_sameAccount(rName),
+				Check: resource.ComposeAggregateTestCheckFunc(
+					testAccCheckTransitGatewayPeeringAttachmentExists(ctx, t, resourceName, &transitGatewayPeeringAttachment),
+					resource.TestCheckResourceAttr(resourceName, "options.#", "0"),
+				),
+				ConfigPlanChecks: resource.ConfigPlanChecks{
+					PreApply: []plancheck.PlanCheck{
+						plancheck.ExpectResourceAction(resourceName, plancheck.ResourceActionNoop),
+					},
+					PostApplyPostRefresh: []plancheck.PlanCheck{
+						plancheck.ExpectEmptyPlan(),
+					},
+				},
 			},
 		},
 	})
@@ -340,6 +464,18 @@ resource "aws_ec2_transit_gateway_peering_attachment" "test" {
   options {
     dynamic_routing = "enable"
   }
+}
+`, acctest.AlternateRegion()))
+}
+
+func testAccTransitGatewayPeeringAttachmentConfig_emptyOptions_sameAccount(rName string) string {
+	return acctest.ConfigCompose(testAccTransitGatewayPeeringAttachmentConfig_sameAccount_base(rName), fmt.Sprintf(`
+resource "aws_ec2_transit_gateway_peering_attachment" "test" {
+  peer_region             = %[1]q
+  peer_transit_gateway_id = aws_ec2_transit_gateway.peer.id
+  transit_gateway_id      = aws_ec2_transit_gateway.test.id
+
+  options {}
 }
 `, acctest.AlternateRegion()))
 }
